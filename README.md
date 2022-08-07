@@ -1,5 +1,5 @@
 # Self Balancing Robot
-[![Selfbalancingrobot](https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fwww.terasic.com.tw%2Fattachment%2Farchive%2F1096%2Fimage%2FBalance_robot_typeB_03.jpg&f=1&nofb=1)]
+![Selfbalancingrobot](https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fwww.terasic.com.tw%2Fattachment%2Farchive%2F1096%2Fimage%2FBalance_robot_typeB_03.jpg&f=1&nofb=1)
 
 This repo is for the details of the self balancing robot created from scratch.
 This repo uses MPU6050 as the IMU(Intertial Measurement Unit). Data from the MPU is read using the [i2cdevlib and MPU6050](https://github.com/jrowberg/i2cdevlib).
