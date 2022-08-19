@@ -6,7 +6,7 @@
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 #include "motor.h"
-
+#include "PID_v1.h"
 
 // Arduino Wire library is required if I2Cdev I2CDEV_ARDUINO_WIRE implementation
 // is used in I2Cdev.h
@@ -41,9 +41,21 @@ Quaternion q;		 // [w, x, y, z]         quaternion container
 VectorFloat gravity; // [x, y, z]            gravity vector
 float ypr[3];		 // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
-//motor variables
+// motor variables
 motor _motor;
 Motor_config motor_conf;
+
+// PID values
+double orignalSetpoint=173;
+double setpoint;
+double movingAngleOffset = 0.1;
+double input, output;
+
+// tuning values
+double Kp=0;
+double Ki=0;
+double Kd=0;
+PID pid(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -54,9 +66,6 @@ void dmpDataReady()
 {
 	mpuInterrupt = true;
 }
-
-
-
 
 // ==================================================================
 // ===               			SETUP				              ===
@@ -78,7 +87,8 @@ void setup()
 	// 38400 or slower in these cases, or use some kind of external separate
 	// crystal solution for the UART timer.
 
-	// initialize device
+	// initialize device ::::: pid is setup inside it
+
 	MPUinit();
 
 	// intialize motor
@@ -88,26 +98,41 @@ void setup()
 	pinMode(LED_PIN, OUTPUT);
 }
 
-
 // ==================================================================
 // ===               			LOOP				              ===
 // ==================================================================
 
 void loop()
 {
-	runmotor(&_motor);
 	if (!dmpReady)
-		return;
-	
+		return; 
+	while (!mpuInterrupt && fifoCount < packetSize)
+	{
+		pid.Compute();
+		if (output < 0)
+		{
+			_motor.setDirection(CLOCKWISE);
+		}
+		else if (output > 0)
+		{
+			_motor.setDirection(ANTICLOCKWISE);
+		}
+		else
+		{
+			_motor.setDirection(STOP);
+		}
+		_motor.setSpeed((output < 0) ? -output : output);
+		_motor.runmotors();
+	}
+
+
+
+  
 	readMPUdata();
 }
 
-
-
-
-
-
-void I2Cinit(){
+void I2Cinit()
+{
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
 	Wire.begin();
 	Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
@@ -116,7 +141,8 @@ void I2Cinit(){
 #endif
 }
 
-void MPUinit(){
+void MPUinit()
+{
 	Serial.println(F("Initializing I2C devices..."));
 	mpu.initialize();
 	pinMode(INTERRUPT_PIN, INPUT);
@@ -124,7 +150,6 @@ void MPUinit(){
 	// verify connection
 	Serial.println(F("Testing device connections..."));
 	Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
-
 
 	// load and configure the DMP
 	Serial.println(F("Initializing DMP..."));
@@ -134,8 +159,8 @@ void MPUinit(){
 	mpu.setXGyroOffset(102);
 	mpu.setYGyroOffset(-14);
 	mpu.setZGyroOffset(-15);
-  	mpu.setXAccelOffset(-1871);
-  	mpu.setYAccelOffset(-527);
+	mpu.setXAccelOffset(-1871);
+	mpu.setYAccelOffset(-527);
 	mpu.setZAccelOffset(507); // 1688 factory default for my test chip
 
 	// make sure it worked (returns 0 if so)
@@ -162,6 +187,9 @@ void MPUinit(){
 
 		// get expected DMP packet size for later comparison
 		packetSize = mpu.dmpGetFIFOPacketSize();
+
+		// setup pid
+		pidsetup();
 	}
 	else
 	{
@@ -173,48 +201,72 @@ void MPUinit(){
 		Serial.print(devStatus);
 		Serial.println(F(")"));
 	}
-
 }
 
-void readMPUdata(){
-	// read a packet from FIFO
-	if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer))
-	{ // Get the Latest packet
-		// display gyro angles	 in degrees
+void readMPUdata()
+{
+	// reset interrupt flag and get INT_STATUS byte
+	mpuInterrupt = false;
+	mpuIntStatus = mpu.getIntStatus();
+
+	// get current FIFO count
+	fifoCount = mpu.getFIFOCount();
+
+	// check for overflow (this should never happen unless our code is too inefficient)
+	if ((mpuIntStatus & 0x10) || fifoCount == 1024)
+	{
+		// reset so we can continue cleanly
+		mpu.resetFIFO();
+		Serial.println(F("FIFO overflow!"));
+
+		// otherwise, check for DMP data ready interrupt (this should happen frequently)
+	}
+	else if (mpuIntStatus & 0x02)
+	{
+		// wait for correct available data length, should be a VERY short wait
+		while (fifoCount < packetSize)
+			fifoCount = mpu.getFIFOCount();
+
+		// read a packet from FIFO
+		mpu.getFIFOBytes(fifoBuffer, packetSize);
+
+		// track FIFO count here in case there is > 1 packet available
+		// (this lets us immediately read more without waiting for an interrupt)
+		fifoCount -= packetSize;
+
 		mpu.dmpGetQuaternion(&q, fifoBuffer);
 		mpu.dmpGetGravity(&gravity, &q);
 		mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-		Serial.print("ypr\t");
-		Serial.print(ypr[0] * 180 / M_PI);
-		Serial.print("\t");
-		Serial.print(ypr[1] * 180 / M_PI);
-		Serial.print("\t");
-		Serial.println(ypr[2] * 180 / M_PI);
-		// blink LED to indicate activity
-		blinkState = !blinkState;
-		digitalWrite(LED_PIN, blinkState);
+		input = ypr[1] * 180 / M_PI + 180;
+    Serial.println(input);
 	}
 }
 
-
-void motorsetup(){
-	 motor_config_init();
-    _motor = motor(&motor_conf);
-    _motor.motors_init();
+void motorsetup()
+{
+	motor_config_init();
+	_motor = motor(&motor_conf);
+	_motor.motors_init();
 }
 
-void motor_config_init(){
-    motor_conf.motor1.outputpin1=4;
-    motor_conf.motor1.outputpin2=7;
-    motor_conf.motor1.speedpin=5;
-    motor_conf.motor1.speed=255;
-    motor_conf.motor1.direction=CLOCKWISE;
-	 
- 
+void motor_config_init()
+{
+	motor_conf.motor1.outputpin1 = 4;
+	motor_conf.motor1.outputpin2 = 7;
+	motor_conf.motor1.speedpin = 5;
+	motor_conf.motor1.speed = 255;
+	motor_conf.motor1.direction = CLOCKWISE;
 
-    motor_conf.motor2.outputpin1=8;
-    motor_conf.motor2.outputpin2=9;
-    motor_conf.motor2.speedpin=6;
-    motor_conf.motor2.speed=255;
-    motor_conf.motor1.direction=CLOCKWISE;
+	motor_conf.motor2.outputpin1 = 8;
+	motor_conf.motor2.outputpin2 = 9;
+	motor_conf.motor2.speedpin = 6;
+	motor_conf.motor2.speed = 255;
+	motor_conf.motor1.direction = CLOCKWISE;
+}
+
+void pidsetup()
+{
+	pid.SetMode(AUTOMATIC);
+	pid.SetSampleTime(10);
+	pid.SetOutputLimits(-255, 255);
 }

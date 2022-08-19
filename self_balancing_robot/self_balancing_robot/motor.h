@@ -16,10 +16,11 @@ struct Motor_control{
     uint8_t speedpin;
     uint8_t speed;// this is pwm value 0-255
     Direction direction;
+    float speedFactor;// this value optimizes the speed of motor and makes the multiple motor same
 };
 
 //this sturcture defines the configuration of 2 motors in a single structure
-struct Motor_config{
+struct Q//*Q12Motor_config{
     Motor_control motor1; 
     Motor_control motor2;
 };
@@ -34,6 +35,8 @@ class motor{
     motor(Motor_config *motor_conf);
     void motors_init();
     void runmotors();
+    void setDirection(Direction dir1,Direction dir2=-11110);
+    void setSpeed(uint8_t speed);
     
 };
 void motorsetup(Motor_control *motor);
